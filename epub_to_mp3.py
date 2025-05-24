@@ -14,6 +14,7 @@ import pyttsx3
 from pydub import AudioSegment
 import tempfile
 import argparse
+import time
 
 
 class EpubToMp3Converter:
@@ -26,14 +27,41 @@ class EpubToMp3Converter:
         self.tts = pyttsx3.init()
         self.setup_arabic_tts()
 
+    def list_available_voices(self):
+        """List all available voices for debugging"""
+        voices = self.tts.getProperty("voices")
+        print("\nAvailable voices:")
+        print("-" * 50)
+        for i, voice in enumerate(voices):
+            print(f"{i}: {voice.name}")
+            print(f"   ID: {voice.id}")
+            print(f"   Languages: {getattr(voice, 'languages', 'N/A')}")
+            print()
+
     def setup_arabic_tts(self):
         """Configure TTS engine for Arabic text"""
         voices = self.tts.getProperty("voices")
 
-        # Try to find an Arabic voice
+        # First, let's see what voices are available
+        print("Searching for Arabic voices...")
+        self.list_available_voices()
+
+        # Look for Arabic voices with better detection
         arabic_voice = None
+        arabic_keywords = [
+            "arabic",
+            "عربي",
+            "ar-",
+            "ar_",
+            "saudi",
+            "egypt",
+            "lebanon",
+            "syria",
+        ]
+
         for voice in voices:
-            if "arabic" in voice.name.lower() or "ar" in voice.id.lower():
+            voice_info = f"{voice.name.lower()} {voice.id.lower()}"
+            if any(keyword in voice_info for keyword in arabic_keywords):
                 arabic_voice = voice
                 break
 
@@ -41,11 +69,17 @@ class EpubToMp3Converter:
             self.tts.setProperty("voice", arabic_voice.id)
             print(f"Using Arabic voice: {arabic_voice.name}")
         else:
-            print("No Arabic voice found, using default voice")
+            print("WARNING: No Arabic voice found!")
+            print("Available voices will be listed above.")
+            print("The audio may not sound correct for Arabic text.")
+            # Use the first available voice as fallback
+            if voices:
+                self.tts.setProperty("voice", voices[0].id)
+                print(f"Using fallback voice: {voices[0].name}")
 
         # Set speech rate and volume
-        self.tts.setProperty("rate", 150)  # Adjust speed as needed
-        self.tts.setProperty("volume", 0.9)
+        self.tts.setProperty("rate", 120)  # Slower for better Arabic pronunciation
+        self.tts.setProperty("volume", 1.0)
 
     def extract_text_from_html(self, html_content):
         """Extract clean text from HTML content"""
@@ -90,20 +124,69 @@ class EpubToMp3Converter:
             temp_path = temp_file.name
 
         try:
+            print(f"Generating speech for text: {text[:50]}...")
+
             # Generate speech
             self.tts.save_to_file(text, temp_path)
             self.tts.runAndWait()
 
-            # Convert to MP3 using pydub
-            audio = AudioSegment.from_wav(temp_path)
-            audio.export(output_path, format="mp3", bitrate="128k")
+            # Wait a bit to ensure file is written
+            time.sleep(1)
 
+            # Check if the temporary WAV file was created and has content
+            if not os.path.exists(temp_path):
+                raise Exception("TTS failed to create audio file")
+
+            wav_size = os.path.getsize(temp_path)
+            print(f"Generated WAV file size: {wav_size} bytes")
+
+            if wav_size < 1000:  # WAV files should be much larger than this
+                raise Exception(
+                    f"Generated audio file is too small ({wav_size} bytes) - TTS likely failed"
+                )
+
+            # Convert to MP3 using pydub
+            print("Converting WAV to MP3...")
+            audio = AudioSegment.from_wav(temp_path)
+
+            # Export with better quality settings
+            audio.export(
+                output_path,
+                format="mp3",
+                bitrate="192k",
+                parameters=["-q:a", "2"],  # Higher quality
+            )
+
+            final_size = os.path.getsize(output_path)
+            print(f"Final MP3 file size: {final_size} bytes")
             print(f"Audio saved to: {output_path}")
+
+        except Exception as e:
+            print(f"Error during TTS conversion: {e}")
+            print("This might be due to:")
+            print("1. No proper Arabic TTS voice installed")
+            print("2. Text encoding issues")
+            print("3. TTS engine configuration problems")
+            raise
 
         finally:
             # Clean up temporary file
             if os.path.exists(temp_path):
                 os.unlink(temp_path)
+
+    def test_tts(self):
+        """Test TTS with a simple Arabic phrase"""
+        test_text = "مرحبا بكم في اختبار التحويل من النص إلى الكلام"
+        test_output = self.output_dir / "test_arabic_tts.mp3"
+
+        print(f"Testing TTS with: {test_text}")
+        try:
+            self.text_to_speech(test_text, test_output)
+            print("TTS test successful!")
+            return True
+        except Exception as e:
+            print(f"TTS test failed: {e}")
+            return False
 
     def convert_chapter(self, chapter_index=0):
         """Convert a specific chapter to MP3"""
@@ -131,10 +214,21 @@ class EpubToMp3Converter:
         print(f"Converting chapter {chapter_index}: {chapter['title']}")
         print(f"Text length: {len(chapter['text'])} characters")
 
-        # Convert to MP3
-        self.text_to_speech(chapter["text"], output_path)
+        # Show a preview of the text
+        preview_text = (
+            chapter["text"][:200] + "..."
+            if len(chapter["text"]) > 200
+            else chapter["text"]
+        )
+        print(f"Text preview: {preview_text}")
 
-        return output_path
+        # Convert to MP3
+        try:
+            self.text_to_speech(chapter["text"], output_path)
+            return output_path
+        except Exception as e:
+            print(f"Failed to convert chapter {chapter_index}: {e}")
+            return None
 
     def convert_all_chapters(self):
         """Convert all chapters to separate MP3 files"""
@@ -181,6 +275,12 @@ def main():
     )
     parser.add_argument("-l", "--list", action="store_true", help="List all chapters")
     parser.add_argument("-a", "--all", action="store_true", help="Convert all chapters")
+    parser.add_argument(
+        "-t", "--test", action="store_true", help="Test TTS with Arabic text"
+    )
+    parser.add_argument(
+        "-v", "--voices", action="store_true", help="List available voices"
+    )
 
     args = parser.parse_args()
 
@@ -190,7 +290,11 @@ def main():
 
     converter = EpubToMp3Converter(args.epub_file, args.output)
 
-    if args.list:
+    if args.voices:
+        converter.list_available_voices()
+    elif args.test:
+        converter.test_tts()
+    elif args.list:
         converter.list_chapters()
     elif args.chapter is not None:
         converter.convert_chapter(args.chapter)
