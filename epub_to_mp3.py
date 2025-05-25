@@ -21,43 +21,26 @@ class EpubToMp3Converter:
     def __init__(self, epub_path, output_dir="output"):
         self.epub_path = Path(epub_path)
         self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(exist_ok=True)
-
-        # Initialize TTS engine
-        self.tts = pyttsx3.init()
+        self.output_dir.mkdir(exist_ok=True)  # ? Is it ok that this is exist_ok
+        self.tts_engine = pyttsx3.init()
         self.setup_arabic_tts()
 
     def list_available_voices(self):
         """List all available voices for debugging"""
-        voices = self.tts.getProperty("voices")
+        voices = self.tts_engine.getProperty("voices")
         print("\nAvailable voices:")
         print("-" * 50)
         for i, voice in enumerate(voices):
             print(f"{i}: {voice.name}")
             print(f"   ID: {voice.id}")
-            print(f"   Languages: {getattr(voice, 'languages', 'N/A')}")
             print()
 
     def setup_arabic_tts(self):
         """Configure TTS engine for Arabic text"""
-        voices = self.tts.getProperty("voices")
+        voices = self.tts_engine.getProperty("voices")
 
-        # First, let's see what voices are available
-        print("Searching for Arabic voices...")
-        self.list_available_voices()
-
-        # Look for Arabic voices with better detection
         arabic_voice = None
-        arabic_keywords = [
-            "arabic",
-            "عربي",
-            "ar-",
-            "ar_",
-            "saudi",
-            "egypt",
-            "lebanon",
-            "syria",
-        ]
+        arabic_keywords = ["arabic"]
 
         for voice in voices:
             voice_info = f"{voice.name.lower()} {voice.id.lower()}"
@@ -66,30 +49,23 @@ class EpubToMp3Converter:
                 break
 
         if arabic_voice:
-            self.tts.setProperty("voice", arabic_voice.id)
+            self.tts_engine.setProperty("voice", arabic_voice.id)
             print(f"Using Arabic voice: {arabic_voice.name}")
         else:
             print("WARNING: No Arabic voice found!")
-            print("Available voices will be listed above.")
-            print("The audio may not sound correct for Arabic text.")
-            # Use the first available voice as fallback
-            if voices:
-                self.tts.setProperty("voice", voices[0].id)
-                print(f"Using fallback voice: {voices[0].name}")
 
-        # Set speech rate and volume
-        self.tts.setProperty("rate", 120)  # Slower for better Arabic pronunciation
-        self.tts.setProperty("volume", 1.0)
+        self.tts_engine.setProperty(
+            "rate", 120
+        )  # Slower for better Arabic pronunciation
+        self.tts_engine.setProperty("volume", 1.0)
 
     def extract_text_from_html(self, html_content):
         """Extract clean text from HTML content"""
         soup = BeautifulSoup(html_content, "html.parser")
 
-        # Remove script and style elements
         for script in soup(["script", "style"]):
             script.decompose()
 
-        # Get text and clean it up
         text = soup.get_text()
 
         # Clean up whitespace
@@ -106,7 +82,6 @@ class EpubToMp3Converter:
 
         for item in book.get_items():
             if item.get_type() == ebooklib.ITEM_DOCUMENT:
-                # Extract text content
                 html_content = item.get_content().decode("utf-8")
                 text = self.extract_text_from_html(html_content)
 
@@ -123,17 +98,17 @@ class EpubToMp3Converter:
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
             temp_path = temp_file.name
 
+        # TODO: Refactor into test cases
         try:
             print(f"Generating speech for text: {text[:50]}...")
 
             # Generate speech
-            self.tts.save_to_file(text, temp_path)
-            self.tts.runAndWait()
+            self.tts_engine.save_to_file(text, temp_path)
+            self.tts_engine.runAndWait()
 
             # Wait a bit to ensure file is written
             time.sleep(1)
 
-            # Check if the temporary WAV file was created and has content
             if not os.path.exists(temp_path):
                 raise Exception("TTS failed to create audio file")
 
@@ -145,16 +120,14 @@ class EpubToMp3Converter:
                     f"Generated audio file is too small ({wav_size} bytes) - TTS likely failed"
                 )
 
-            # Convert to MP3 using pydub
             print("Converting WAV to MP3...")
             audio = AudioSegment.from_wav(temp_path)
 
-            # Export with better quality settings
             audio.export(
                 output_path,
                 format="mp3",
                 bitrate="192k",
-                parameters=["-q:a", "2"],  # Higher quality
+                parameters=["-q:a", "2"],  # ? What does this do?
             )
 
             final_size = os.path.getsize(output_path)
@@ -163,10 +136,6 @@ class EpubToMp3Converter:
 
         except Exception as e:
             print(f"Error during TTS conversion: {e}")
-            print("This might be due to:")
-            print("1. No proper Arabic TTS voice installed")
-            print("2. Text encoding issues")
-            print("3. TTS engine configuration problems")
             raise
 
         finally:
@@ -179,7 +148,6 @@ class EpubToMp3Converter:
         test_text = "مرحبا بكم في اختبار التحويل من النص إلى الكلام"
         test_output = self.output_dir / "test_arabic_tts.mp3"
 
-        print(f"Testing TTS with: {test_text}")
         try:
             self.text_to_speech(test_text, test_output)
             print("TTS test successful!")
