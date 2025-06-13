@@ -20,7 +20,25 @@ class EpubToMp3Converter:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
         self.voice_name = voice_name
+        self.book_name = self._get_book_name()
         self.setup_azure_speech()
+
+    def _get_book_name(self):
+        """Extract book name from EPUB file for use in filenames"""
+        try:
+            book = epub.read_epub(self.epub_path)
+            title = book.get_metadata("DC", "title")
+            if title:
+                book_name = title[0][0]  # Get the first title
+                # Clean the title for use in filenames
+                safe_name = re.sub(r"[^\w\s-]", "", book_name).strip()
+                safe_name = re.sub(r"[-\s]+", "_", safe_name)
+                return safe_name
+        except Exception:
+            pass
+
+        # Fallback to filename without extension
+        return self.epub_path.stem
 
     def setup_azure_speech(self):
         """Configure Azure Speech SDK for Arabic text"""
@@ -32,9 +50,7 @@ class EpubToMp3Converter:
 
         self.speech_config.speech_synthesis_voice_name = self.voice_name
 
-        # TODO: Make voice a little slower
-        # Optional: Set speech rate and other properties
-        # You can adjust these values as needed
+        # Set speech rate and other properties
         self.speech_config.set_speech_synthesis_output_format(
             speechsdk.SpeechSynthesisOutputFormat.Audio48Khz192KBitRateMonoMp3
         )
@@ -94,13 +110,11 @@ class EpubToMp3Converter:
                 print("Speech synthesis completed successfully")
 
                 with open(output_path, "wb") as audio_file:
-                    # ? How does this dictate the filename?
                     audio_file.write(result.audio_data)
 
                 final_size = os.path.getsize(output_path)
-                # TODO: Convert this to MB
-                print(f"Final MP3 file size: {final_size} bytes")
-                print(f"Audio saved to: {output_path}")
+                final_size_mb = final_size / (1024 * 1024)
+                print(f"Final MP3 file size: {final_size_mb:.2f} MB")
             else:
                 raise Exception(f"Speech synthesis failed with reason: {result.reason}")
 
@@ -137,24 +151,16 @@ class EpubToMp3Converter:
 
         chapter = chapters[chapter_index]
 
-        # TODO: Change filename format to be "<book_name>_Chapter <chapter_index>"
-        # ? Should also check if filename is enough to be displayed in Spotify as a local file or would it need editing the file properties
-        # ? What does the safe_title do?
-        # Create safe filename
-        safe_title = re.sub(r"[^\w\s-]", "", chapter["title"]).strip()
-        safe_title = re.sub(r"[-\s]+", "_", safe_title)
-
-        output_filename = f"chapter_{chapter_index:02d}_{safe_title}.mp3"
+        output_filename = f"{self.book_name}_Chapter_{chapter_index + 1:02d}.mp3"
         output_path = self.output_dir / output_filename
 
-        print(f"Converting chapter {chapter_index}: {chapter['title']}")
         print(f"Text length: {len(chapter['text'])} characters")
 
         try:
             self.text_to_speech(chapter["text"], output_path)
             return output_path
         except Exception as e:
-            print(f"Failed to convert chapter {chapter_index}: {e}")
+            print(f"Failed to convert chapter {chapter_index + 1}: {e}")
             return None
 
     def convert_all_chapters(self):
@@ -167,8 +173,8 @@ class EpubToMp3Converter:
 
         output_files = []
 
-        for i, chapter in enumerate(chapters):
-            print(f"\nProcessing chapter {i+1}/{len(chapters)}: {chapter['title']}")
+        for i, _ in enumerate(chapters):
+            print(f"\nProcessing chapter {i+1}/{len(chapters)}")
             output_path = self.convert_chapter(i)
             if output_path:
                 output_files.append(output_path)
