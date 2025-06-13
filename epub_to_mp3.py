@@ -24,30 +24,20 @@ class EpubToMp3Converter:
 
     def setup_azure_speech(self):
         """Configure Azure Speech SDK for Arabic text"""
-        # Get credentials from environment variables
-        speech_key = os.environ.get("SPEECH_KEY")
-        endpoint = os.environ.get("ENDPOINT")
 
-        if not speech_key or not endpoint:
-            raise ValueError(
-                "SPEECH_KEY and ENDPOINT environment variables must be set"
-            )
-
-        # Configure speech settings
         self.speech_config = speechsdk.SpeechConfig(
-            subscription=speech_key, endpoint=endpoint
+            subscription=os.environ.get("SPEECH_KEY"),
+            endpoint=os.environ.get("ENDPOINT"),
         )
 
-        # Set the Arabic voice
         self.speech_config.speech_synthesis_voice_name = self.voice_name
 
+        # TODO: Make voice a little slower
         # Optional: Set speech rate and other properties
         # You can adjust these values as needed
         self.speech_config.set_speech_synthesis_output_format(
             speechsdk.SpeechSynthesisOutputFormat.Audio48Khz192KBitRateMonoMp3
         )
-
-        print(f"Using Azure Speech voice: {self.voice_name}")
 
     def list_available_voices(self):
         """List available voices (Note: This requires a different API call in Azure)"""
@@ -55,10 +45,6 @@ class EpubToMp3Converter:
         print("-" * 50)
         print("ar-EG-SalmaNeural - Egyptian Arabic (Female)")
         print("ar-EG-ShakirNeural - Egyptian Arabic (Male)")
-        print("\nTo use other Arabic voices, check Azure documentation for:")
-        print("ar-SA-HamedNeural, ar-SA-ZariyahNeural (Saudi Arabic)")
-        print("ar-AE-FatimaNeural, ar-AE-HamdanNeural (UAE Arabic)")
-        print("And many more regional Arabic voices...")
 
     def extract_text_from_html(self, html_content):
         """Extract clean text from HTML content"""
@@ -97,37 +83,24 @@ class EpubToMp3Converter:
     def text_to_speech(self, text, output_path):
         """Convert text to speech using Azure AI Speech and save as MP3 file"""
         try:
-            print(f"Generating speech for text: {text[:50]}...")
-
-            # Create Azure Speech synthesizer
             synthesizer = speechsdk.SpeechSynthesizer(
                 speech_config=self.speech_config,
                 audio_config=None,  # We'll handle the output manually
             )
 
-            # Generate speech
             result = synthesizer.speak_text_async(text).get()
 
             if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
                 print("Speech synthesis completed successfully")
 
-                # Save the audio data directly to MP3 file
                 with open(output_path, "wb") as audio_file:
+                    # ? How does this dictate the filename?
                     audio_file.write(result.audio_data)
 
                 final_size = os.path.getsize(output_path)
+                # TODO: Convert this to MB
                 print(f"Final MP3 file size: {final_size} bytes")
                 print(f"Audio saved to: {output_path}")
-
-            elif result.reason == speechsdk.ResultReason.Canceled:
-                cancellation_details = result.cancellation_details
-                error_msg = f"Speech synthesis canceled: {cancellation_details.reason}"
-                if cancellation_details.reason == speechsdk.CancellationReason.Error:
-                    if cancellation_details.error_details:
-                        error_msg += (
-                            f"\nError details: {cancellation_details.error_details}"
-                        )
-                raise Exception(error_msg)
             else:
                 raise Exception(f"Speech synthesis failed with reason: {result.reason}")
 
@@ -164,6 +137,9 @@ class EpubToMp3Converter:
 
         chapter = chapters[chapter_index]
 
+        # TODO: Change filename format to be "<book_name>_Chapter <chapter_index>"
+        # ? Should also check if filename is enough to be displayed in Spotify as a local file or would it need editing the file properties
+        # ? What does the safe_title do?
         # Create safe filename
         safe_title = re.sub(r"[^\w\s-]", "", chapter["title"]).strip()
         safe_title = re.sub(r"[-\s]+", "_", safe_title)
@@ -174,15 +150,6 @@ class EpubToMp3Converter:
         print(f"Converting chapter {chapter_index}: {chapter['title']}")
         print(f"Text length: {len(chapter['text'])} characters")
 
-        # Show a preview of the text
-        preview_text = (
-            chapter["text"][:200] + "..."
-            if len(chapter["text"]) > 200
-            else chapter["text"]
-        )
-        print(f"Text preview: {preview_text}")
-
-        # Convert to MP3
         try:
             self.text_to_speech(chapter["text"], output_path)
             return output_path
@@ -216,13 +183,7 @@ class EpubToMp3Converter:
         print("-" * 50)
 
         for i, chapter in enumerate(chapters):
-            text_preview = (
-                chapter["text"][:100] + "..."
-                if len(chapter["text"]) > 100
-                else chapter["text"]
-            )
             print(f"{i}: {chapter['title']}")
-            print(f"   Text preview: {text_preview}")
             print(f"   Length: {len(chapter['text'])} characters\n")
 
 
@@ -260,9 +221,6 @@ def main():
         converter = EpubToMp3Converter(args.epub_file, args.output, args.voice)
     except ValueError as e:
         print(f"Error: {e}")
-        print("\nMake sure you have set the following environment variables:")
-        print("SPEECH_KEY - Your Azure Speech resource key")
-        print("ENDPOINT - Your Azure Speech resource endpoint")
         return
 
     if args.voices:
@@ -276,7 +234,6 @@ def main():
     elif args.all:
         converter.convert_all_chapters()
     else:
-        # Default: convert first chapter
         print("Converting first chapter (use --help for more options)")
         converter.convert_chapter(0)
 
