@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Arabic EPUB to MP3 Converter
-Converts EPUB files to MP3 audio files using text-to-speech
+Converts EPUB files to MP3 audio files using Azure AI Speech text-to-speech
 """
 
 import os
@@ -10,54 +10,55 @@ from pathlib import Path
 import ebooklib
 from ebooklib import epub
 from bs4 import BeautifulSoup
-import pyttsx3
-from pydub import AudioSegment
-import tempfile
+import azure.cognitiveservices.speech as speechsdk
 import argparse
-import time
 
 
 class EpubToMp3Converter:
-    def __init__(self, epub_path, output_dir="output"):
+    def __init__(self, epub_path, output_dir="output", voice_name="ar-EG-SalmaNeural"):
         self.epub_path = Path(epub_path)
         self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(exist_ok=True)  # ? Is it ok that this is exist_ok
-        self.tts_engine = pyttsx3.init()
-        self.setup_arabic_tts()
+        self.output_dir.mkdir(exist_ok=True)
+        self.voice_name = voice_name
+        self.setup_azure_speech()
+
+    def setup_azure_speech(self):
+        """Configure Azure Speech SDK for Arabic text"""
+        # Get credentials from environment variables
+        speech_key = os.environ.get("SPEECH_KEY")
+        endpoint = os.environ.get("ENDPOINT")
+
+        if not speech_key or not endpoint:
+            raise ValueError(
+                "SPEECH_KEY and ENDPOINT environment variables must be set"
+            )
+
+        # Configure speech settings
+        self.speech_config = speechsdk.SpeechConfig(
+            subscription=speech_key, endpoint=endpoint
+        )
+
+        # Set the Arabic voice
+        self.speech_config.speech_synthesis_voice_name = self.voice_name
+
+        # Optional: Set speech rate and other properties
+        # You can adjust these values as needed
+        self.speech_config.set_speech_synthesis_output_format(
+            speechsdk.SpeechSynthesisOutputFormat.Audio48Khz192KBitRateMonoMp3
+        )
+
+        print(f"Using Azure Speech voice: {self.voice_name}")
 
     def list_available_voices(self):
-        """List all available voices for debugging"""
-        voices = self.tts_engine.getProperty("voices")
-        print("\nAvailable voices:")
+        """List available voices (Note: This requires a different API call in Azure)"""
+        print("Available Arabic voices for Azure Speech:")
         print("-" * 50)
-        for i, voice in enumerate(voices):
-            print(f"{i}: {voice.name}")
-            print(f"   ID: {voice.id}")
-            print()
-
-    def setup_arabic_tts(self):
-        """Configure TTS engine for Arabic text"""
-        voices = self.tts_engine.getProperty("voices")
-
-        arabic_voice = None
-        arabic_keywords = ["arabic"]
-
-        for voice in voices:
-            voice_info = f"{voice.name.lower()} {voice.id.lower()}"
-            if any(keyword in voice_info for keyword in arabic_keywords):
-                arabic_voice = voice
-                break
-
-        if arabic_voice:
-            self.tts_engine.setProperty("voice", arabic_voice.id)
-            print(f"Using Arabic voice: {arabic_voice.name}")
-        else:
-            print("WARNING: No Arabic voice found!")
-
-        self.tts_engine.setProperty(
-            "rate", 120
-        )  # Slower for better Arabic pronunciation
-        self.tts_engine.setProperty("volume", 1.0)
+        print("ar-EG-SalmaNeural - Egyptian Arabic (Female)")
+        print("ar-EG-ShakirNeural - Egyptian Arabic (Male)")
+        print("\nTo use other Arabic voices, check Azure documentation for:")
+        print("ar-SA-HamedNeural, ar-SA-ZariyahNeural (Saudi Arabic)")
+        print("ar-AE-FatimaNeural, ar-AE-HamdanNeural (UAE Arabic)")
+        print("And many more regional Arabic voices...")
 
     def extract_text_from_html(self, html_content):
         """Extract clean text from HTML content"""
@@ -94,66 +95,57 @@ class EpubToMp3Converter:
         return chapters
 
     def text_to_speech(self, text, output_path):
-        """Convert text to speech and save as audio file"""
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
-            temp_path = temp_file.name
-
-        # TODO: Refactor into test cases
+        """Convert text to speech using Azure AI Speech and save as MP3 file"""
         try:
             print(f"Generating speech for text: {text[:50]}...")
 
-            # Generate speech
-            self.tts_engine.save_to_file(text, temp_path)
-            self.tts_engine.runAndWait()
-
-            # Wait a bit to ensure file is written
-            time.sleep(1)
-
-            if not os.path.exists(temp_path):
-                raise Exception("TTS failed to create audio file")
-
-            wav_size = os.path.getsize(temp_path)
-            print(f"Generated WAV file size: {wav_size} bytes")
-
-            if wav_size < 1000:  # WAV files should be much larger than this
-                raise Exception(
-                    f"Generated audio file is too small ({wav_size} bytes) - TTS likely failed"
-                )
-
-            print("Converting WAV to MP3...")
-            audio = AudioSegment.from_wav(temp_path)
-
-            audio.export(
-                output_path,
-                format="mp3",
-                bitrate="192k",
-                parameters=["-q:a", "2"],  # ? What does this do?
+            # Create Azure Speech synthesizer
+            synthesizer = speechsdk.SpeechSynthesizer(
+                speech_config=self.speech_config,
+                audio_config=None,  # We'll handle the output manually
             )
 
-            final_size = os.path.getsize(output_path)
-            print(f"Final MP3 file size: {final_size} bytes")
-            print(f"Audio saved to: {output_path}")
+            # Generate speech
+            result = synthesizer.speak_text_async(text).get()
+
+            if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+                print("Speech synthesis completed successfully")
+
+                # Save the audio data directly to MP3 file
+                with open(output_path, "wb") as audio_file:
+                    audio_file.write(result.audio_data)
+
+                final_size = os.path.getsize(output_path)
+                print(f"Final MP3 file size: {final_size} bytes")
+                print(f"Audio saved to: {output_path}")
+
+            elif result.reason == speechsdk.ResultReason.Canceled:
+                cancellation_details = result.cancellation_details
+                error_msg = f"Speech synthesis canceled: {cancellation_details.reason}"
+                if cancellation_details.reason == speechsdk.CancellationReason.Error:
+                    if cancellation_details.error_details:
+                        error_msg += (
+                            f"\nError details: {cancellation_details.error_details}"
+                        )
+                raise Exception(error_msg)
+            else:
+                raise Exception(f"Speech synthesis failed with reason: {result.reason}")
 
         except Exception as e:
-            print(f"Error during TTS conversion: {e}")
+            print(f"Error during Azure Speech conversion: {e}")
             raise
 
-        finally:
-            # Clean up temporary file
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
-
     def test_tts(self):
-        """Test TTS with a simple Arabic phrase"""
-        test_text = "مرحبا بكم في اختبار التحويل من النص إلى الكلام"
-        test_output = self.output_dir / "test_arabic_tts.mp3"
+        """Test Azure Speech with a simple Arabic phrase"""
+        test_text = "مرحبا بكم في اختبار التحويل من النص إلى الكلام باستخدام خدمة الكلام من مايكروسوفت"
+        test_output = self.output_dir / "test_azure_arabic_tts.mp3"
 
         try:
             self.text_to_speech(test_text, test_output)
-            print("TTS test successful!")
+            print("Azure Speech TTS test successful!")
             return True
         except Exception as e:
-            print(f"TTS test failed: {e}")
+            print(f"Azure Speech TTS test failed: {e}")
             return False
 
     def convert_chapter(self, chapter_index=0):
@@ -235,7 +227,9 @@ class EpubToMp3Converter:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Convert Arabic EPUB to MP3")
+    parser = argparse.ArgumentParser(
+        description="Convert Arabic EPUB to MP3 using Azure Speech"
+    )
     parser.add_argument("epub_file", help="Path to the EPUB file")
     parser.add_argument("-o", "--output", default="output", help="Output directory")
     parser.add_argument(
@@ -244,10 +238,16 @@ def main():
     parser.add_argument("-l", "--list", action="store_true", help="List all chapters")
     parser.add_argument("-a", "--all", action="store_true", help="Convert all chapters")
     parser.add_argument(
-        "-t", "--test", action="store_true", help="Test TTS with Arabic text"
+        "-t", "--test", action="store_true", help="Test Azure Speech with Arabic text"
     )
     parser.add_argument(
-        "-v", "--voices", action="store_true", help="List available voices"
+        "-v", "--voices", action="store_true", help="List available Arabic voices"
+    )
+    parser.add_argument(
+        "--voice",
+        default="ar-EG-SalmaNeural",
+        choices=["ar-EG-SalmaNeural", "ar-EG-ShakirNeural"],
+        help="Choose Arabic voice (default: ar-EG-SalmaNeural)",
     )
 
     args = parser.parse_args()
@@ -256,7 +256,14 @@ def main():
         print(f"Error: EPUB file '{args.epub_file}' not found")
         return
 
-    converter = EpubToMp3Converter(args.epub_file, args.output)
+    try:
+        converter = EpubToMp3Converter(args.epub_file, args.output, args.voice)
+    except ValueError as e:
+        print(f"Error: {e}")
+        print("\nMake sure you have set the following environment variables:")
+        print("SPEECH_KEY - Your Azure Speech resource key")
+        print("ENDPOINT - Your Azure Speech resource endpoint")
+        return
 
     if args.voices:
         converter.list_available_voices()
