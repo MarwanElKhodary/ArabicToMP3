@@ -190,6 +190,9 @@ class EpubToMp3Converter:
                 print(f"Converting text chunk ({len(text)} characters)...")
                 result = synthesizer.speak_text_async(text).get()
 
+                if result is None:
+                    return False
+
                 if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
                     with open(output_path, "wb") as audio_file:
                         audio_file.write(result.audio_data)

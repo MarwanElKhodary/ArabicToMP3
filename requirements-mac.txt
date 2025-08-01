@@ -1,0 +1,18 @@
+# Mac-compatible requirements for Arabic EPUB to MP3 Converter
+azure-cognitiveservices-speech==1.44.0
+azure-core==1.34.0
+beautifulsoup4==4.13.4
+certifi==2025.4.26
+charset-normalizer==3.4.2
+click==8.1.8
+colorama==0.4.6
+EbookLib==0.19
+gTTS==2.5.4
+idna==3.10
+lxml==5.4.0
+pydub==0.25.1
+requests==2.32.3
+six==1.17.0
+soupsieve==2.7
+typing_extensions==4.13.2
+urllib3==2.4.0
